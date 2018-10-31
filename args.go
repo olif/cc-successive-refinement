@@ -7,7 +7,18 @@ import (
 	"unicode"
 )
 
-var valid = true
+var (
+	valid         = true
+	errorArgument = '0'
+	errorCode     = ErrorCodeOk
+)
+
+const (
+	// ErrorCodeOk - ok code
+	ErrorCodeOk = 0
+	// ErrorCodeMissingString  - missing string code
+	ErrorCodeMissingString = 1
+)
 
 // Args -
 type Args struct {
@@ -15,62 +26,100 @@ type Args struct {
 	args                []string
 	nrOfArguments       int
 	unexpectedArguments []rune
+	argsFound           []rune
 	booleanArgs         map[rune]bool
+	stringArgs          map[rune]string
+	currentArgument     int
 }
 
 // NewArgs - returns a new ArgParser
-func NewArgs(schema string, args []string) *Args {
+func NewArgs(schema string, args []string) (*Args, error) {
+	var err error
 	a := Args{
 		schema:              schema,
 		args:                args,
 		nrOfArguments:       0,
 		unexpectedArguments: make([]rune, 0),
+		argsFound:           make([]rune, 0),
 		booleanArgs:         make(map[rune]bool),
+		stringArgs:          make(map[rune]string),
 	}
 
-	valid = a.parse()
-	return &a
+	valid, err = a.parse()
+	return &a, err
 }
 
 func (a *Args) isValid() bool {
 	return valid
 }
 
-func (a *Args) parse() bool {
+func (a *Args) parse() (bool, error) {
 	if len(a.schema) == 0 && len(a.args) == 0 {
-		return true
+		return true, nil
 	}
-	a.parseSchema()
-	a.parseArguments()
-	return len(a.unexpectedArguments) == 0
+	if ok, err := a.parseSchema(); err != nil {
+		return ok, err
+	}
+	if ok := a.parseArguments(); !ok {
+		return ok, nil
+	}
+	return len(a.unexpectedArguments) == 0, nil
 }
 
 func (a *Args) parseSchema() (bool, error) {
 	for _, element := range strings.Split(a.schema, ",") {
 		if len(element) > 0 {
 			trimmedElement := strings.TrimSpace(element)
-			a.parseSchemaElement(trimmedElement)
+			if err := a.parseSchemaElement(trimmedElement); err != nil {
+				return false, err
+			}
 		}
 	}
 	return true, nil
 }
 
-func (a *Args) parseSchemaElement(element string) {
-	if len(element) == 1 {
-		a.parseBooleanSchemaElement(element)
+func (a *Args) parseSchemaElement(element string) error {
+	elementID := rune(element[0])
+	elementTail := element[1:]
+	if err := a.validateSchemaElement(elementID); err != nil {
+		return err
 	}
+	if isBooleanSchemaElement(elementTail) {
+		a.parseBoolSchemaElement(elementID)
+	} else if isStringSchemaElement(elementTail) {
+		a.parseStringSchemaElement(elementID)
+	}
+
+	return nil
 }
 
-func (a *Args) parseBooleanSchemaElement(element string) {
-	c := rune(element[0])
-	if unicode.IsLetter(c) {
-		a.booleanArgs[c] = false
+func (a *Args) validateSchemaElement(elementID rune) error {
+	if !unicode.IsLetter(elementID) {
+		return fmt.Errorf("Bad characted %s in Args format: %s", string(elementID), a.schema)
 	}
+
+	return nil
+}
+
+func (a *Args) parseStringSchemaElement(elementID rune) {
+	a.stringArgs[elementID] = ""
+}
+
+func isStringSchemaElement(elementTail string) bool {
+	return elementTail == "*"
+}
+
+func (a *Args) parseBoolSchemaElement(elementID rune) {
+	a.booleanArgs[elementID] = false
+}
+
+func isBooleanSchemaElement(elementTail string) bool {
+	return len(elementTail) == 0
 }
 
 func (a *Args) parseArguments() bool {
-	for _, arg := range a.args {
-		a.parseArgument(arg)
+	for a.currentArgument = 0; a.currentArgument < len(a.args); a.currentArgument++ {
+		a.parseArgument(a.args[a.currentArgument])
 	}
 
 	return true
@@ -89,11 +138,45 @@ func (a *Args) parseElements(arg string) {
 }
 
 func (a *Args) parseElement(argChar rune) {
-	if a.isBool(argChar) {
-		a.setBoolArg(argChar, true)
+	if a.setArgument(argChar) {
+		a.argsFound = append(a.argsFound, argChar)
 	} else {
 		a.unexpectedArguments = append(a.unexpectedArguments, argChar)
+		valid = false
 	}
+}
+
+func (a *Args) setArgument(argChar rune) bool {
+	set := true
+	if a.isBool(argChar) {
+		a.setBoolArg(argChar, true)
+	} else if a.isString(argChar) {
+		a.setStringArg(argChar, "")
+	} else {
+		set = false
+	}
+
+	return set
+}
+
+func (a *Args) setStringArg(argChar rune, s string) {
+	a.currentArgument++
+	if a.currentArgument >= len(a.args) {
+		valid = false
+		errorArgument = argChar
+		errorCode = ErrorCodeMissingString
+		return
+	}
+	arg := a.args[a.currentArgument]
+	a.stringArgs[argChar] = arg
+}
+
+func (a *Args) isString(argChar rune) bool {
+	if _, ok := a.stringArgs[argChar]; ok {
+		return true
+	}
+
+	return false
 }
 
 func (a *Args) setBoolArg(argChar rune, value bool) {
@@ -110,7 +193,7 @@ func (a *Args) isBool(argChar rune) bool {
 
 // Cardinality - Returns the number of arguments
 func (a *Args) Cardinality() int {
-	return a.nrOfArguments
+	return len(a.argsFound)
 }
 
 // Usage - Returns a string describing the usage
@@ -127,8 +210,15 @@ func (a *Args) ErrorMessage() string {
 	if len(a.unexpectedArguments) > 0 {
 		return a.unexpectedArgumentMessage()
 	} else {
-		return ""
+		switch errorCode {
+		case ErrorCodeMissingString:
+			return fmt.Sprintf("Could not find string parameter for -%s", string(errorArgument))
+		case ErrorCodeOk:
+			return fmt.Sprintf("TILT: Should not get here")
+		}
 	}
+
+	return ""
 }
 
 func (a *Args) unexpectedArgumentMessage() string {
@@ -145,4 +235,17 @@ func (a *Args) unexpectedArgumentMessage() string {
 // GetBoolean - Returns the value of the boolean arg
 func (a *Args) GetBoolean(arg rune) bool {
 	return a.booleanArgs[arg]
+}
+
+func (a *Args) GetString(arg rune) string {
+	return a.stringArgs[arg]
+}
+
+func (a *Args) Has(arg rune) bool {
+	for _, v := range a.argsFound {
+		if v == arg {
+			return true
+		}
+	}
+	return false
 }
