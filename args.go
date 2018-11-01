@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -18,6 +19,10 @@ const (
 	ErrorCodeOk = 0
 	// ErrorCodeMissingString  - missing string code
 	ErrorCodeMissingString = 1
+	// ErrorCodeMissingInteger  - missing integer code
+	ErrorCodeMissingInteger = 2
+	// ErrorCodeInvalidInteger  - invalid integer code
+	ErrorCodeInvalidInteger = 3
 )
 
 // Args -
@@ -27,42 +32,59 @@ type Args struct {
 	nrOfArguments       int
 	unexpectedArguments []rune
 	argsFound           []rune
-	booleanArgs         map[rune]*BooleanArgumentMarshaler
-	stringArgs          map[rune]*StringArgumentMarshaler
+	marhalers           map[rune]ArgumentMarshaler
 	currentArgument     int
 }
 
-type ArgumentMarshaler struct {
-	boolVal   bool
-	stringVal string
+type ArgumentMarshaler interface {
+	get() interface{}
+	set(s string) error
 }
 
 type BooleanArgumentMarshaler struct {
 	ArgumentMarshaler
+	boolVal bool
+}
+
+func (b *BooleanArgumentMarshaler) set(val string) error {
+	b.boolVal = true
+	return nil
+}
+
+func (b *BooleanArgumentMarshaler) get() interface{} {
+	return b.boolVal
 }
 
 type StringArgumentMarshaler struct {
 	ArgumentMarshaler
+	stringVal string
+}
+
+func (s *StringArgumentMarshaler) set(val string) error {
+	s.stringVal = val
+	return nil
+}
+
+func (s *StringArgumentMarshaler) get() interface{} {
+	return s.stringVal
 }
 
 type IntegerArgumentMarshaler struct {
 	ArgumentMarshaler
+	intVal int
 }
 
-func (a *ArgumentMarshaler) setBool(value bool) {
-	a.boolVal = value
+func (m *IntegerArgumentMarshaler) set(s string) error {
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+	m.intVal = val
+	return nil
 }
 
-func (a *ArgumentMarshaler) getBool() bool {
-	return a.boolVal
-}
-
-func (a *ArgumentMarshaler) setString(s string) {
-	a.stringVal = s
-}
-
-func (a *ArgumentMarshaler) getString() string {
-	return a.stringVal
+func (s *IntegerArgumentMarshaler) get() interface{} {
+	return s.intVal
 }
 
 // NewArgs - returns a new ArgParser
@@ -74,8 +96,7 @@ func NewArgs(schema string, args []string) (*Args, error) {
 		nrOfArguments:       0,
 		unexpectedArguments: make([]rune, 0),
 		argsFound:           make([]rune, 0),
-		booleanArgs:         make(map[rune]*BooleanArgumentMarshaler),
-		stringArgs:          make(map[rune]*StringArgumentMarshaler),
+		marhalers:           make(map[rune]ArgumentMarshaler),
 	}
 
 	valid, err = a.parse()
@@ -118,9 +139,11 @@ func (a *Args) parseSchemaElement(element string) error {
 		return err
 	}
 	if isBooleanSchemaElement(elementTail) {
-		a.parseBoolSchemaElement(elementID)
+		a.marhalers[elementID] = &BooleanArgumentMarshaler{}
 	} else if isStringSchemaElement(elementTail) {
-		a.parseStringSchemaElement(elementID)
+		a.marhalers[elementID] = &StringArgumentMarshaler{}
+	} else if isIntegerSchemaElement(elementTail) {
+		a.marhalers[elementID] = &IntegerArgumentMarshaler{}
 	}
 
 	return nil
@@ -130,20 +153,15 @@ func (a *Args) validateSchemaElement(elementID rune) error {
 	if !unicode.IsLetter(elementID) {
 		return fmt.Errorf("Bad characted %s in Args format: %s", string(elementID), a.schema)
 	}
-
 	return nil
 }
 
-func (a *Args) parseStringSchemaElement(elementID rune) {
-	a.stringArgs[elementID] = &StringArgumentMarshaler{}
+func isIntegerSchemaElement(elementTail string) bool {
+	return elementTail == "#"
 }
 
 func isStringSchemaElement(elementTail string) bool {
 	return elementTail == "*"
-}
-
-func (a *Args) parseBoolSchemaElement(elementID rune) {
-	a.booleanArgs[elementID] = &BooleanArgumentMarshaler{}
 }
 
 func isBooleanSchemaElement(elementTail string) bool {
@@ -171,7 +189,7 @@ func (a *Args) parseElements(arg string) {
 }
 
 func (a *Args) parseElement(argChar rune) {
-	if a.setArgument(argChar) {
+	if err := a.setArgument(argChar); err == nil {
 		a.argsFound = append(a.argsFound, argChar)
 	} else {
 		a.unexpectedArguments = append(a.unexpectedArguments, argChar)
@@ -179,49 +197,45 @@ func (a *Args) parseElement(argChar rune) {
 	}
 }
 
-func (a *Args) setArgument(argChar rune) bool {
-	set := true
-	if a.isBool(argChar) {
-		a.setBoolArg(argChar, true)
-	} else if a.isString(argChar) {
-		a.setStringArg(argChar, "")
-	} else {
-		set = false
+func (a *Args) setArgument(argChar rune) error {
+	m := a.marhalers[argChar]
+	switch m.(type) {
+	case *BooleanArgumentMarshaler:
+		return a.setBoolArg(m)
+	case *StringArgumentMarshaler:
+		return a.setStringArg(m)
+	case *IntegerArgumentMarshaler:
+		return a.setIntArg(m)
 	}
 
-	return set
+	return fmt.Errorf("Not a valid arg type")
 }
 
-func (a *Args) setStringArg(argChar rune, s string) {
+func (a *Args) setStringArg(m ArgumentMarshaler) error {
 	a.currentArgument++
 	if a.currentArgument >= len(a.args) {
 		valid = false
-		errorArgument = argChar
 		errorCode = ErrorCodeMissingString
-		return
+		return fmt.Errorf("Missing string argument")
 	}
 	arg := a.args[a.currentArgument]
-	a.stringArgs[argChar].setString(arg)
+	return m.set(arg)
 }
 
-func (a *Args) isString(argChar rune) bool {
-	if _, ok := a.stringArgs[argChar]; ok {
-		return true
+func (a *Args) setBoolArg(m ArgumentMarshaler) error {
+	return m.set("true")
+}
+
+func (a *Args) setIntArg(m ArgumentMarshaler) error {
+	a.currentArgument++
+	if a.currentArgument > len(a.args) {
+		valid = false
+		errorCode = ErrorCodeMissingInteger
+		return fmt.Errorf("Missing integer argument")
 	}
 
-	return false
-}
-
-func (a *Args) setBoolArg(argChar rune, value bool) {
-	a.booleanArgs[argChar].setBool(value)
-}
-
-func (a *Args) isBool(argChar rune) bool {
-	if _, ok := a.booleanArgs[argChar]; ok {
-		return true
-	}
-
-	return false
+	arg := a.args[a.currentArgument]
+	return m.set(arg)
 }
 
 // Cardinality - Returns the number of arguments
@@ -267,17 +281,25 @@ func (a *Args) unexpectedArgumentMessage() string {
 
 // GetBoolean - Returns the value of the boolean arg
 func (a *Args) GetBoolean(arg rune) bool {
-	if argMarshaler, ok := a.booleanArgs[arg]; ok {
-		return argMarshaler.getBool()
+	if argMarshaler, ok := a.marhalers[arg]; ok {
+		return argMarshaler.get().(bool)
 	}
 	return false
 }
 
 func (a *Args) GetString(arg rune) string {
-	if stringMarshaler, ok := a.stringArgs[arg]; ok {
-		return stringMarshaler.getString()
+	if stringMarshaler, ok := a.marhalers[arg]; ok {
+		return stringMarshaler.get().(string)
 	}
 	return ""
+}
+
+func (a *Args) GetInteger(arg rune) int {
+	if intMarshaler, ok := a.marhalers[arg]; ok {
+		return intMarshaler.get().(int)
+	}
+
+	return 0
 }
 
 func (a *Args) Has(arg rune) bool {

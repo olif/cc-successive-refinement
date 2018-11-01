@@ -23,6 +23,16 @@ func TestCanParseStringArg(t *testing.T) {
 	}
 }
 
+func TestCanParseInteger(t *testing.T) {
+	a, err := NewArgs("d#", []string{"-d", "1"})
+	if err != nil {
+		t.Errorf("Could not parse args")
+	}
+	if 1 != a.GetInteger('d') {
+		t.Errorf("Incorrect integer value: %s", a.ErrorMessage())
+	}
+}
+
 func TestCanParseBothStringAndBoolArg(t *testing.T) {
 	a, err := NewArgs("l,d*", []string{"-l", "-d", "testing"})
 	if err != nil {
@@ -35,20 +45,6 @@ func TestCanParseBothStringAndBoolArg(t *testing.T) {
 
 	if "testing" != a.GetString('d') {
 		t.Errorf("Invalid string arg")
-	}
-}
-
-func TestArgsSetsDefaultValueForArgWithoutArgument(t *testing.T) {
-	a, err := NewArgs("d*", []string{"-d"})
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	if !a.isValid() {
-		t.Errorf("Not valid")
-	}
-
-	if "" != a.GetString('d') {
-		t.Errorf("No default value set")
 	}
 }
 
