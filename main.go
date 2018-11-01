@@ -19,6 +19,5 @@ func main() {
 		}
 	} else {
 		log.Println("Could not parse args")
-		log.Println(a.ErrorMessage())
 	}
 }

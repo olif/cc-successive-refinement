@@ -1,5 +1,7 @@
 package main
 
+// Create a list for all errors encountered
+
 import (
 	"bytes"
 	"fmt"
@@ -8,22 +10,53 @@ import (
 	"unicode"
 )
 
-var (
-	valid         = true
-	errorArgument = '0'
-	errorCode     = ErrorCodeOk
-)
-
 const (
 	// ErrorCodeOk - ok code
 	ErrorCodeOk = 0
+	// ErrorCodeUnexpectedArgument -
+	ErrorCodeUnexpectedArgument = 1
 	// ErrorCodeMissingString  - missing string code
-	ErrorCodeMissingString = 1
+	ErrorCodeMissingString = 2
 	// ErrorCodeMissingInteger  - missing integer code
-	ErrorCodeMissingInteger = 2
+	ErrorCodeMissingInteger = 3
 	// ErrorCodeInvalidInteger  - invalid integer code
-	ErrorCodeInvalidInteger = 3
+	ErrorCodeInvalidInteger = 4
+	// ErrorCodeMissingFloat  - missing float code
+	ErrorCodeMissingFloat = 5
+	// ErrorCodeInvalidFloat  - invalid float code
+	ErrorCodeInvalidFloat = 6
+	// ErrorCodeInvalidArgumentName  - invalid name code
+	ErrorCodeInvalidArgumentName = 7
 )
+
+type argsErrorCode int
+
+type argsError struct {
+	errorArgumentID rune
+	errorParameter  string
+	errorCode       argsErrorCode
+}
+
+func (e *argsError) Error() string {
+	switch e.errorCode {
+	case ErrorCodeOk:
+		return fmt.Sprintf("TILT: Should not get here")
+	case ErrorCodeUnexpectedArgument:
+		return fmt.Sprintf("Argument -%s unexpected", string(e.errorArgumentID))
+	case ErrorCodeMissingString:
+		return fmt.Sprintf("Could not find string parameter for -%s", string(e.errorArgumentID))
+	case ErrorCodeInvalidInteger:
+		return fmt.Sprintf("Argument -%s expects an integer but was '%s'", string(e.errorArgumentID), e.errorParameter)
+	case ErrorCodeInvalidFloat:
+		return fmt.Sprintf("Argument -%s expects a float but was '%s'", string(e.errorArgumentID), e.errorParameter)
+	case ErrorCodeMissingFloat:
+		return fmt.Sprintf("Could not find double parameter for -%s", string(e.errorArgumentID))
+	case ErrorCodeInvalidArgumentName:
+		return fmt.Sprintf("'%s' is not a valid argument name", string(e.errorArgumentID))
+	}
+
+	return ""
+}
 
 // Args -
 type Args struct {
@@ -35,95 +68,8 @@ type Args struct {
 	currentArgument     *iterator
 }
 
-type iterator struct {
-	pos      int
-	elements []string
-}
-
-func newIterator(elements []string) *iterator {
-	return &iterator{
-		pos:      -1,
-		elements: elements,
-	}
-}
-
-func (i *iterator) next() string {
-	i.pos++
-	return i.elements[i.pos]
-}
-
-func (i *iterator) hasNext() bool {
-	return i.pos < len(i.elements)-1
-}
-
-// ArgumentMarshaler - Parses cmd line arguments and makes them retrievable by key
-type ArgumentMarshaler interface {
-	get() interface{}
-	set(i *iterator) error
-}
-
-type booleanArgumentMarshaler struct {
-	ArgumentMarshaler
-	boolVal bool
-}
-
-func (b *booleanArgumentMarshaler) set(i *iterator) error {
-	b.boolVal = true
-	return nil
-}
-
-func (b *booleanArgumentMarshaler) get() interface{} {
-	return b.boolVal
-}
-
-type stringArgumentMarshaler struct {
-	ArgumentMarshaler
-	stringVal string
-}
-
-func (s *stringArgumentMarshaler) set(i *iterator) error {
-	if !i.hasNext() {
-		valid = false
-		errorCode = ErrorCodeMissingString
-		return fmt.Errorf("Missing string argument")
-	}
-	arg := i.next()
-	s.stringVal = arg
-	return nil
-}
-
-func (s *stringArgumentMarshaler) get() interface{} {
-	return s.stringVal
-}
-
-type integerArgumentMarshaler struct {
-	ArgumentMarshaler
-	intVal int
-}
-
-func (m *integerArgumentMarshaler) set(i *iterator) error {
-	if !i.hasNext() {
-		valid = false
-		errorCode = ErrorCodeMissingInteger
-		return fmt.Errorf("Missing integer argument")
-	}
-
-	param := i.next()
-	intVal, err := strconv.Atoi(param)
-	if err != nil {
-		return err
-	}
-	m.intVal = intVal
-	return nil
-}
-
-func (m *integerArgumentMarshaler) get() interface{} {
-	return m.intVal
-}
-
 // NewArgs - returns a new ArgParser
 func NewArgs(schema string, args []string) (*Args, error) {
-	var err error
 	a := Args{
 		schema:              schema,
 		args:                args,
@@ -133,37 +79,33 @@ func NewArgs(schema string, args []string) (*Args, error) {
 		currentArgument:     nil,
 	}
 
-	valid, err = a.parse()
-	return &a, err
+	return &a, a.parse()
 }
 
-func (a *Args) isValid() bool {
-	return valid
-}
-
-func (a *Args) parse() (bool, error) {
+func (a *Args) parse() error {
 	if len(a.schema) == 0 && len(a.args) == 0 {
-		return true, nil
+		return nil
 	}
-	if ok, err := a.parseSchema(); err != nil {
-		return ok, err
+	if err := a.parseSchema(); err != nil {
+		return err
 	}
-	if ok := a.parseArguments(); !ok {
-		return ok, nil
+	if err := a.parseArguments(); err != nil {
+		return err
 	}
-	return len(a.unexpectedArguments) == 0, nil
+	//return len(a.unexpectedArguments) == 0, nil
+	return nil
 }
 
-func (a *Args) parseSchema() (bool, error) {
+func (a *Args) parseSchema() error {
 	for _, element := range strings.Split(a.schema, ",") {
 		if len(element) > 0 {
 			trimmedElement := strings.TrimSpace(element)
 			if err := a.parseSchemaElement(trimmedElement); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
-	return true, nil
+	return nil
 }
 
 func (a *Args) parseSchemaElement(element string) error {
@@ -172,12 +114,17 @@ func (a *Args) parseSchemaElement(element string) error {
 	if err := a.validateSchemaElement(elementID); err != nil {
 		return err
 	}
-	if isBooleanSchemaElement(elementTail) {
+
+	if len(elementTail) == 0 {
 		a.marhalers[elementID] = &booleanArgumentMarshaler{}
-	} else if isStringSchemaElement(elementTail) {
+	} else if elementTail == "*" {
 		a.marhalers[elementID] = &stringArgumentMarshaler{}
-	} else if isIntegerSchemaElement(elementTail) {
+	} else if elementTail == "#" {
 		a.marhalers[elementID] = &integerArgumentMarshaler{}
+	} else if elementTail == "##" {
+		a.marhalers[elementID] = &floatArgumentMarshaler{}
+	} else {
+		return fmt.Errorf("%s has invalid format: %s", string(elementID), elementTail)
 	}
 
 	return nil
@@ -190,46 +137,44 @@ func (a *Args) validateSchemaElement(elementID rune) error {
 	return nil
 }
 
-func isIntegerSchemaElement(elementTail string) bool {
-	return elementTail == "#"
-}
-
-func isStringSchemaElement(elementTail string) bool {
-	return elementTail == "*"
-}
-
-func isBooleanSchemaElement(elementTail string) bool {
-	return len(elementTail) == 0
-}
-
-func (a *Args) parseArguments() bool {
+func (a *Args) parseArguments() error {
 	for a.currentArgument = newIterator(a.args); a.currentArgument.hasNext(); {
 		arg := a.currentArgument.next()
-		a.parseArgument(arg)
+		if err := a.parseArgument(arg); err != nil {
+			return err
+		}
 	}
 
-	return true
+	return nil
 }
 
-func (a *Args) parseArgument(arg string) {
+func (a *Args) parseArgument(arg string) error {
 	if string(arg[0]) == "-" {
-		a.parseElements(arg)
+		return a.parseElements(arg)
 	}
+	return nil
 }
 
-func (a *Args) parseElements(arg string) {
+func (a *Args) parseElements(arg string) error {
 	for i := 1; i < len(arg); i++ {
-		a.parseElement(rune(arg[i]))
+		if err := a.parseElement(rune(arg[i])); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (a *Args) parseElement(argChar rune) {
+func (a *Args) parseElement(argChar rune) error {
 	if err := a.setArgument(argChar); err == nil {
 		a.argsFound = append(a.argsFound, argChar)
 	} else {
 		a.unexpectedArguments = append(a.unexpectedArguments, argChar)
-		valid = false
+		argsErr := err.(*argsError)
+		argsErr.errorArgumentID = argChar
+		return argsErr
 	}
+
+	return nil
 }
 
 func (a *Args) setArgument(argChar rune) error {
@@ -237,9 +182,7 @@ func (a *Args) setArgument(argChar rune) error {
 	if !ok {
 		return fmt.Errorf("Not a valid arg type")
 	}
-
-	m.set(a.currentArgument)
-	return nil
+	return m.set(a.currentArgument)
 }
 
 // Cardinality - Returns the number of arguments
@@ -251,24 +194,7 @@ func (a *Args) Cardinality() int {
 func (a *Args) Usage() string {
 	if len(a.schema) > 0 {
 		return fmt.Sprintf("[%s]", a.schema)
-	} else {
-		return ""
 	}
-}
-
-// ErrorMessage - Returns a string containing an error message for all unexpected arguments
-func (a *Args) ErrorMessage() string {
-	if len(a.unexpectedArguments) > 0 {
-		return a.unexpectedArgumentMessage()
-	} else {
-		switch errorCode {
-		case ErrorCodeMissingString:
-			return fmt.Sprintf("Could not find string parameter for -%s", string(errorArgument))
-		case ErrorCodeOk:
-			return fmt.Sprintf("TILT: Should not get here")
-		}
-	}
-
 	return ""
 }
 
@@ -308,6 +234,15 @@ func (a *Args) GetInteger(arg rune) int {
 	return 0
 }
 
+// GetDouble - Returns an integer given its argument key
+func (a *Args) GetDouble(arg rune) float64 {
+	if doubleMarshaler, ok := a.marhalers[arg]; ok {
+		return doubleMarshaler.get().(float64)
+	}
+
+	return 0
+}
+
 // Has - Returns true if the argument key exists, otherwise false
 func (a *Args) Has(arg rune) bool {
 	for _, v := range a.argsFound {
@@ -316,4 +251,111 @@ func (a *Args) Has(arg rune) bool {
 		}
 	}
 	return false
+}
+
+// ArgumentMarshaler - Parses cmd line arguments and makes them retrievable by key
+type ArgumentMarshaler interface {
+	get() interface{}
+	set(i *iterator) error
+}
+
+type booleanArgumentMarshaler struct {
+	boolVal bool
+}
+
+func (b *booleanArgumentMarshaler) set(i *iterator) error {
+	b.boolVal = true
+	return nil
+}
+
+func (b *booleanArgumentMarshaler) get() interface{} {
+	return b.boolVal
+}
+
+type stringArgumentMarshaler struct {
+	stringVal string
+}
+
+func (s *stringArgumentMarshaler) set(i *iterator) error {
+	if !i.hasNext() {
+		return &argsError{errorCode: ErrorCodeMissingString}
+	}
+	arg := i.next()
+	s.stringVal = arg
+	return nil
+}
+
+func (s *stringArgumentMarshaler) get() interface{} {
+	return s.stringVal
+}
+
+type integerArgumentMarshaler struct {
+	intVal int
+}
+
+func (m *integerArgumentMarshaler) set(i *iterator) error {
+	if !i.hasNext() {
+		return &argsError{errorCode: ErrorCodeMissingInteger}
+	}
+
+	param := i.next()
+	intVal, err := strconv.Atoi(param)
+	if err != nil {
+		return &argsError{
+			errorCode:      ErrorCodeInvalidInteger,
+			errorParameter: param,
+		}
+	}
+	m.intVal = intVal
+	return nil
+}
+
+func (m *integerArgumentMarshaler) get() interface{} {
+	return m.intVal
+}
+
+type floatArgumentMarshaler struct {
+	floatVal float64
+}
+
+func (m *floatArgumentMarshaler) set(i *iterator) error {
+	if !i.hasNext() {
+		return &argsError{errorCode: ErrorCodeMissingFloat}
+	}
+
+	param := i.next()
+	floatVal, err := strconv.ParseFloat(param, 64)
+	if err != nil {
+		return &argsError{
+			errorCode:      ErrorCodeInvalidFloat,
+			errorParameter: param,
+		}
+	}
+	m.floatVal = floatVal
+	return nil
+}
+
+func (m *floatArgumentMarshaler) get() interface{} {
+	return m.floatVal
+}
+
+type iterator struct {
+	pos      int
+	elements []string
+}
+
+func newIterator(elements []string) *iterator {
+	return &iterator{
+		pos:      -1,
+		elements: elements,
+	}
+}
+
+func (i *iterator) next() string {
+	i.pos++
+	return i.elements[i.pos]
+}
+
+func (i *iterator) hasNext() bool {
+	return i.pos < len(i.elements)-1
 }

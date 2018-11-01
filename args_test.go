@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestCanParseBoolArg(t *testing.T) {
 	a, err := NewArgs("l", []string{"-l"})
@@ -24,12 +26,9 @@ func TestCanParseStringArg(t *testing.T) {
 }
 
 func TestCanParseInteger(t *testing.T) {
-	a, err := NewArgs("d#", []string{"-d", "1"})
+	_, err := NewArgs("d#", []string{"-d", "1"})
 	if err != nil {
-		t.Errorf("Could not parse args")
-	}
-	if 1 != a.GetInteger('d') {
-		t.Errorf("Incorrect integer value: %s", a.ErrorMessage())
+		t.Errorf(err.Error())
 	}
 }
 
@@ -48,13 +47,40 @@ func TestCanParseBothStringAndBoolArg(t *testing.T) {
 	}
 }
 
+func TestDoublePresent(t *testing.T) {
+	a, err := NewArgs("x##", []string{"-x", "42.3"})
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	if !a.Has('x') {
+		t.Errorf("Element not found")
+	}
+
+	if a.Cardinality() != 1 {
+		t.Errorf("Invalid number of arguments found")
+	}
+
+	if 42.3 != a.GetDouble('x') {
+		t.Errorf("Value is invalid")
+	}
+}
+
+func TestMissingDouble(t *testing.T) {
+	_, err := NewArgs("x##", []string{"-x"})
+	if err != nil {
+		if err.Error() != "Could not find double parameter for -x" {
+			t.Errorf("Got: %s", err.Error())
+		}
+	} else {
+		t.Fail()
+	}
+}
+
 func TestBla(t *testing.T) {
 	a, err := NewArgs("d*", []string{"-d", "testing", "bla"})
 	if err != nil {
 		t.Errorf(err.Error())
-	}
-	if !a.isValid() {
-		t.Errorf(a.ErrorMessage())
 	}
 
 	if "testing" != a.GetString('d') {
