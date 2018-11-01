@@ -27,9 +27,33 @@ type Args struct {
 	nrOfArguments       int
 	unexpectedArguments []rune
 	argsFound           []rune
-	booleanArgs         map[rune]bool
+	booleanArgs         map[rune]*BooleanArgumentMarshaler
 	stringArgs          map[rune]string
 	currentArgument     int
+}
+
+type ArgumentMarshaler struct {
+	boolVal bool
+}
+
+type BooleanArgumentMarshaler struct {
+	ArgumentMarshaler
+}
+
+type StringArgumentMarshaler struct {
+	ArgumentMarshaler
+}
+
+type IntegerArgumentMarshaler struct {
+	ArgumentMarshaler
+}
+
+func (a *ArgumentMarshaler) setBool(value bool) {
+	a.boolVal = value
+}
+
+func (a *ArgumentMarshaler) getBool() bool {
+	return a.boolVal
 }
 
 // NewArgs - returns a new ArgParser
@@ -41,7 +65,7 @@ func NewArgs(schema string, args []string) (*Args, error) {
 		nrOfArguments:       0,
 		unexpectedArguments: make([]rune, 0),
 		argsFound:           make([]rune, 0),
-		booleanArgs:         make(map[rune]bool),
+		booleanArgs:         make(map[rune]*BooleanArgumentMarshaler),
 		stringArgs:          make(map[rune]string),
 	}
 
@@ -110,7 +134,7 @@ func isStringSchemaElement(elementTail string) bool {
 }
 
 func (a *Args) parseBoolSchemaElement(elementID rune) {
-	a.booleanArgs[elementID] = false
+	a.booleanArgs[elementID] = &BooleanArgumentMarshaler{}
 }
 
 func isBooleanSchemaElement(elementTail string) bool {
@@ -180,7 +204,7 @@ func (a *Args) isString(argChar rune) bool {
 }
 
 func (a *Args) setBoolArg(argChar rune, value bool) {
-	a.booleanArgs[argChar] = value
+	a.booleanArgs[argChar].setBool(value)
 }
 
 func (a *Args) isBool(argChar rune) bool {
@@ -234,7 +258,10 @@ func (a *Args) unexpectedArgumentMessage() string {
 
 // GetBoolean - Returns the value of the boolean arg
 func (a *Args) GetBoolean(arg rune) bool {
-	return a.booleanArgs[arg]
+	if argMarshaler, ok := a.booleanArgs[arg]; ok {
+		return argMarshaler.getBool()
+	}
+	return false
 }
 
 func (a *Args) GetString(arg rune) string {
