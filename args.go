@@ -29,62 +29,96 @@ const (
 type Args struct {
 	schema              string
 	args                []string
-	nrOfArguments       int
 	unexpectedArguments []rune
 	argsFound           []rune
 	marhalers           map[rune]ArgumentMarshaler
-	currentArgument     int
+	currentArgument     *iterator
 }
 
+type iterator struct {
+	pos      int
+	elements []string
+}
+
+func newIterator(elements []string) *iterator {
+	return &iterator{
+		pos:      -1,
+		elements: elements,
+	}
+}
+
+func (i *iterator) next() string {
+	i.pos++
+	return i.elements[i.pos]
+}
+
+func (i *iterator) hasNext() bool {
+	return i.pos < len(i.elements)-1
+}
+
+// ArgumentMarshaler - Parses cmd line arguments and makes them retrievable by key
 type ArgumentMarshaler interface {
 	get() interface{}
-	set(s string) error
+	set(i *iterator) error
 }
 
-type BooleanArgumentMarshaler struct {
+type booleanArgumentMarshaler struct {
 	ArgumentMarshaler
 	boolVal bool
 }
 
-func (b *BooleanArgumentMarshaler) set(val string) error {
+func (b *booleanArgumentMarshaler) set(i *iterator) error {
 	b.boolVal = true
 	return nil
 }
 
-func (b *BooleanArgumentMarshaler) get() interface{} {
+func (b *booleanArgumentMarshaler) get() interface{} {
 	return b.boolVal
 }
 
-type StringArgumentMarshaler struct {
+type stringArgumentMarshaler struct {
 	ArgumentMarshaler
 	stringVal string
 }
 
-func (s *StringArgumentMarshaler) set(val string) error {
-	s.stringVal = val
+func (s *stringArgumentMarshaler) set(i *iterator) error {
+	if !i.hasNext() {
+		valid = false
+		errorCode = ErrorCodeMissingString
+		return fmt.Errorf("Missing string argument")
+	}
+	arg := i.next()
+	s.stringVal = arg
 	return nil
 }
 
-func (s *StringArgumentMarshaler) get() interface{} {
+func (s *stringArgumentMarshaler) get() interface{} {
 	return s.stringVal
 }
 
-type IntegerArgumentMarshaler struct {
+type integerArgumentMarshaler struct {
 	ArgumentMarshaler
 	intVal int
 }
 
-func (m *IntegerArgumentMarshaler) set(s string) error {
-	val, err := strconv.Atoi(s)
+func (m *integerArgumentMarshaler) set(i *iterator) error {
+	if !i.hasNext() {
+		valid = false
+		errorCode = ErrorCodeMissingInteger
+		return fmt.Errorf("Missing integer argument")
+	}
+
+	param := i.next()
+	intVal, err := strconv.Atoi(param)
 	if err != nil {
 		return err
 	}
-	m.intVal = val
+	m.intVal = intVal
 	return nil
 }
 
-func (s *IntegerArgumentMarshaler) get() interface{} {
-	return s.intVal
+func (m *integerArgumentMarshaler) get() interface{} {
+	return m.intVal
 }
 
 // NewArgs - returns a new ArgParser
@@ -93,10 +127,10 @@ func NewArgs(schema string, args []string) (*Args, error) {
 	a := Args{
 		schema:              schema,
 		args:                args,
-		nrOfArguments:       0,
 		unexpectedArguments: make([]rune, 0),
 		argsFound:           make([]rune, 0),
 		marhalers:           make(map[rune]ArgumentMarshaler),
+		currentArgument:     nil,
 	}
 
 	valid, err = a.parse()
@@ -139,11 +173,11 @@ func (a *Args) parseSchemaElement(element string) error {
 		return err
 	}
 	if isBooleanSchemaElement(elementTail) {
-		a.marhalers[elementID] = &BooleanArgumentMarshaler{}
+		a.marhalers[elementID] = &booleanArgumentMarshaler{}
 	} else if isStringSchemaElement(elementTail) {
-		a.marhalers[elementID] = &StringArgumentMarshaler{}
+		a.marhalers[elementID] = &stringArgumentMarshaler{}
 	} else if isIntegerSchemaElement(elementTail) {
-		a.marhalers[elementID] = &IntegerArgumentMarshaler{}
+		a.marhalers[elementID] = &integerArgumentMarshaler{}
 	}
 
 	return nil
@@ -169,8 +203,9 @@ func isBooleanSchemaElement(elementTail string) bool {
 }
 
 func (a *Args) parseArguments() bool {
-	for a.currentArgument = 0; a.currentArgument < len(a.args); a.currentArgument++ {
-		a.parseArgument(a.args[a.currentArgument])
+	for a.currentArgument = newIterator(a.args); a.currentArgument.hasNext(); {
+		arg := a.currentArgument.next()
+		a.parseArgument(arg)
 	}
 
 	return true
@@ -198,44 +233,13 @@ func (a *Args) parseElement(argChar rune) {
 }
 
 func (a *Args) setArgument(argChar rune) error {
-	m := a.marhalers[argChar]
-	switch m.(type) {
-	case *BooleanArgumentMarshaler:
-		return a.setBoolArg(m)
-	case *StringArgumentMarshaler:
-		return a.setStringArg(m)
-	case *IntegerArgumentMarshaler:
-		return a.setIntArg(m)
+	m, ok := a.marhalers[argChar]
+	if !ok {
+		return fmt.Errorf("Not a valid arg type")
 	}
 
-	return fmt.Errorf("Not a valid arg type")
-}
-
-func (a *Args) setStringArg(m ArgumentMarshaler) error {
-	a.currentArgument++
-	if a.currentArgument >= len(a.args) {
-		valid = false
-		errorCode = ErrorCodeMissingString
-		return fmt.Errorf("Missing string argument")
-	}
-	arg := a.args[a.currentArgument]
-	return m.set(arg)
-}
-
-func (a *Args) setBoolArg(m ArgumentMarshaler) error {
-	return m.set("true")
-}
-
-func (a *Args) setIntArg(m ArgumentMarshaler) error {
-	a.currentArgument++
-	if a.currentArgument > len(a.args) {
-		valid = false
-		errorCode = ErrorCodeMissingInteger
-		return fmt.Errorf("Missing integer argument")
-	}
-
-	arg := a.args[a.currentArgument]
-	return m.set(arg)
+	m.set(a.currentArgument)
+	return nil
 }
 
 // Cardinality - Returns the number of arguments
@@ -287,6 +291,7 @@ func (a *Args) GetBoolean(arg rune) bool {
 	return false
 }
 
+// GetString - Returns a string given its argument key
 func (a *Args) GetString(arg rune) string {
 	if stringMarshaler, ok := a.marhalers[arg]; ok {
 		return stringMarshaler.get().(string)
@@ -294,6 +299,7 @@ func (a *Args) GetString(arg rune) string {
 	return ""
 }
 
+// GetInteger - Returns an integer given its argument key
 func (a *Args) GetInteger(arg rune) int {
 	if intMarshaler, ok := a.marhalers[arg]; ok {
 		return intMarshaler.get().(int)
@@ -302,6 +308,7 @@ func (a *Args) GetInteger(arg rune) int {
 	return 0
 }
 
+// Has - Returns true if the argument key exists, otherwise false
 func (a *Args) Has(arg rune) bool {
 	for _, v := range a.argsFound {
 		if v == arg {
