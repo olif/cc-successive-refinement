@@ -28,12 +28,13 @@ type Args struct {
 	unexpectedArguments []rune
 	argsFound           []rune
 	booleanArgs         map[rune]*BooleanArgumentMarshaler
-	stringArgs          map[rune]string
+	stringArgs          map[rune]*StringArgumentMarshaler
 	currentArgument     int
 }
 
 type ArgumentMarshaler struct {
-	boolVal bool
+	boolVal   bool
+	stringVal string
 }
 
 type BooleanArgumentMarshaler struct {
@@ -56,6 +57,14 @@ func (a *ArgumentMarshaler) getBool() bool {
 	return a.boolVal
 }
 
+func (a *ArgumentMarshaler) setString(s string) {
+	a.stringVal = s
+}
+
+func (a *ArgumentMarshaler) getString() string {
+	return a.stringVal
+}
+
 // NewArgs - returns a new ArgParser
 func NewArgs(schema string, args []string) (*Args, error) {
 	var err error
@@ -66,7 +75,7 @@ func NewArgs(schema string, args []string) (*Args, error) {
 		unexpectedArguments: make([]rune, 0),
 		argsFound:           make([]rune, 0),
 		booleanArgs:         make(map[rune]*BooleanArgumentMarshaler),
-		stringArgs:          make(map[rune]string),
+		stringArgs:          make(map[rune]*StringArgumentMarshaler),
 	}
 
 	valid, err = a.parse()
@@ -126,7 +135,7 @@ func (a *Args) validateSchemaElement(elementID rune) error {
 }
 
 func (a *Args) parseStringSchemaElement(elementID rune) {
-	a.stringArgs[elementID] = ""
+	a.stringArgs[elementID] = &StringArgumentMarshaler{}
 }
 
 func isStringSchemaElement(elementTail string) bool {
@@ -192,7 +201,7 @@ func (a *Args) setStringArg(argChar rune, s string) {
 		return
 	}
 	arg := a.args[a.currentArgument]
-	a.stringArgs[argChar] = arg
+	a.stringArgs[argChar].setString(arg)
 }
 
 func (a *Args) isString(argChar rune) bool {
@@ -265,7 +274,10 @@ func (a *Args) GetBoolean(arg rune) bool {
 }
 
 func (a *Args) GetString(arg rune) string {
-	return a.stringArgs[arg]
+	if stringMarshaler, ok := a.stringArgs[arg]; ok {
+		return stringMarshaler.getString()
+	}
+	return ""
 }
 
 func (a *Args) Has(arg rune) bool {
