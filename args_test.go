@@ -1,4 +1,4 @@
-package main
+package args
 
 import (
 	"testing"
@@ -37,14 +37,14 @@ func TestSimpleBooleanPresent(t *testing.T) {
 	a, err := NewArgs("x", []string{"-x"})
 	assertNil(t, err, "Expected nil")
 	assertEquals(t, 1, a.Cardinality(), "Expected 1 argument")
-	assertEquals(t, true, a.GetBoolean('x'), "Expected true")
+	assertEquals(t, true, a.Boolean('x'), "Expected true")
 }
 
 func TestSimpleStringPresent(t *testing.T) {
 	a, err := NewArgs("x*", []string{"-x", "test"})
 	assertNil(t, err, "Expected nil")
 	assertEquals(t, 1, a.Cardinality(), "Expected 1 argument")
-	assertEquals(t, "test", a.GetString('x'), "Expected true")
+	assertEquals(t, "test", a.String('x'), "Expected true")
 }
 
 func TestMissingStringParameter(t *testing.T) {
@@ -65,7 +65,7 @@ func TestSimpleIntPresent(t *testing.T) {
 	a, err := NewArgs("x#", []string{"-x", "1"})
 	assertNil(t, err, "Expected no errors")
 	assertEquals(t, 1, a.Cardinality(), "Expected 1 argument")
-	assertEquals(t, 1, a.GetInteger('x'), "Expected 1")
+	assertEquals(t, 1, a.Integer('x'), "Expected 1")
 }
 
 func TestInvalidIntParameter(t *testing.T) {
@@ -84,7 +84,7 @@ func TestSimpleFloatPresent(t *testing.T) {
 	a, err := NewArgs("x##", []string{"-x", "42.3"})
 	assertNil(t, err, "Expected no errors")
 	assertEquals(t, 1, a.Cardinality(), "Expected 1 argument")
-	assertEquals(t, 42.3, a.GetDouble('x'), "Expected 42.3")
+	assertEquals(t, 42.3, a.Float('x'), "Expected 42.3")
 }
 
 func TestInvalidFloatParameter(t *testing.T) {

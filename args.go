@@ -1,4 +1,4 @@
-package main
+package args
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ type Args struct {
 	schema              string
 	args                []string
 	unexpectedArguments []rune
-	argsFound           []rune
 	marhalers           map[rune]argumentMarshaler
 	currentArgument     *iterator
 }
@@ -24,7 +23,6 @@ func NewArgs(schema string, args []string) (*Args, error) {
 		schema:              schema,
 		args:                args,
 		unexpectedArguments: make([]rune, 0),
-		argsFound:           make([]rune, 0),
 		marhalers:           map[rune]argumentMarshaler{},
 		currentArgument:     nil,
 	}
@@ -32,53 +30,51 @@ func NewArgs(schema string, args []string) (*Args, error) {
 	return &a, a.parse()
 }
 
-// GetBoolean - Returns the value of the boolean arg
-func (a *Args) GetBoolean(arg rune) bool {
+// Boolean - Returns the value of the boolean arg
+func (a *Args) Boolean(arg rune) bool {
+	var val bool
+	if argumentMarshaler, ok := a.marhalers[arg]; ok {
+		val = argumentMarshaler.get().(bool)
+	}
+	return val
+}
+
+// String - Returns a string given its argument key
+func (a *Args) String(arg rune) string {
+	var val string
 	if argMarshaler, ok := a.marhalers[arg]; ok {
-		return argMarshaler.get().(bool)
+		val = argMarshaler.get().(string)
 	}
-	return false
+	return val
 }
 
-// GetString - Returns a string given its argument key
-func (a *Args) GetString(arg rune) string {
-	if stringMarshaler, ok := a.marhalers[arg]; ok {
-		return stringMarshaler.get().(string)
+// Integer - Returns an integer given its argument key
+func (a *Args) Integer(arg rune) int {
+	var val int
+	if argMarshaler, ok := a.marhalers[arg]; ok {
+		val = argMarshaler.get().(int)
 	}
-	return ""
+	return val
 }
 
-// GetInteger - Returns an integer given its argument key
-func (a *Args) GetInteger(arg rune) int {
-	if intMarshaler, ok := a.marhalers[arg]; ok {
-		return intMarshaler.get().(int)
+// Float - Returns an integer given its argument key
+func (a *Args) Float(arg rune) float64 {
+	var val float64
+	if argMarshaler, ok := a.marhalers[arg]; ok {
+		val = argMarshaler.get().(float64)
 	}
-
-	return 0
-}
-
-// GetDouble - Returns an integer given its argument key
-func (a *Args) GetDouble(arg rune) float64 {
-	if doubleMarshaler, ok := a.marhalers[arg]; ok {
-		return doubleMarshaler.get().(float64)
-	}
-
-	return 0
+	return val
 }
 
 // Has - Returns true if the argument key exists, otherwise false
 func (a *Args) Has(arg rune) bool {
-	for _, v := range a.argsFound {
-		if v == arg {
-			return true
-		}
-	}
-	return false
+	_, ok := a.marhalers[arg]
+	return ok
 }
 
 // Cardinality - Returns the number of arguments
 func (a *Args) Cardinality() int {
-	return len(a.argsFound)
+	return len(a.marhalers)
 }
 
 // Usage - Returns a string describing the usage
@@ -90,58 +86,63 @@ func (a *Args) Usage() string {
 }
 
 func (a *Args) parse() error {
-	if len(a.schema) == 0 && len(a.args) == 0 {
-		return nil
+	doIfNotErr := func(err error, fun func() error) error {
+		if err != nil {
+			return err
+		}
+		return fun()
 	}
-	if err := a.parseSchema(); err != nil {
-		return err
-	}
-	if err := a.parseArguments(); err != nil {
-		return err
-	}
+
+	var err error
+	err = doIfNotErr(err, a.parseSchema)
+	err = doIfNotErr(err, a.parseArguments)
+	return doIfNotErr(err, a.checkUnexpectedArguments)
+}
+
+func (a *Args) checkUnexpectedArguments() error {
 	if len(a.unexpectedArguments) != 0 {
 		return &ArgsError{errorCode: ErrUnexpectedArgument}
 	}
-	//return len(a.unexpectedArguments) == 0, nil
 	return nil
 }
 
 func (a *Args) parseSchema() error {
 	for _, element := range strings.Split(a.schema, ",") {
-		if len(element) > 0 {
-			trimmedElement := strings.TrimSpace(element)
-			if err := a.parseSchemaElement(trimmedElement); err != nil {
-				return err
-			}
+		if len(element) == 0 {
+			continue
+		}
+		trimmedElement := strings.TrimSpace(element)
+		if err := a.parseSchemaElement(trimmedElement); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 func (a *Args) parseSchemaElement(element string) error {
+	var err error
 	elementID := rune(element[0])
 	elementTail := element[1:]
-	if err := a.validateSchemaElement(elementID); err != nil {
-		return err
-	}
+	err = a.validateSchemaElement(elementID)
 
-	if len(elementTail) == 0 {
+	switch elementTail {
+	case "":
 		a.marhalers[elementID] = &booleanargumentMarshaler{}
-	} else if elementTail == "*" {
+	case "*":
 		a.marhalers[elementID] = &stringargumentMarshaler{}
-	} else if elementTail == "#" {
+	case "#":
 		a.marhalers[elementID] = &integerargumentMarshaler{}
-	} else if elementTail == "##" {
+	case "##":
 		a.marhalers[elementID] = &floatargumentMarshaler{}
-	} else {
-		return &ArgsError{
+	default:
+		err = &ArgsError{
 			errorCode:       ErrInvalidFormat,
 			errorArgumentID: elementID,
 			errorParameter:  elementTail,
 		}
 	}
 
-	return nil
+	return err
 }
 
 func (a *Args) validateSchemaElement(elementID rune) error {
@@ -181,14 +182,13 @@ func (a *Args) parseElements(arg string) error {
 }
 
 func (a *Args) parseElement(argChar rune) error {
-	if err := a.setArgument(argChar); err == nil {
-		a.argsFound = append(a.argsFound, argChar)
-	} else {
+	if err := a.setArgument(argChar); err != nil {
 		a.unexpectedArguments = append(a.unexpectedArguments, argChar)
 		argsErr := err.(*ArgsError)
 		argsErr.errorArgumentID = argChar
 		return argsErr
 	}
+
 	return nil
 }
 
@@ -215,14 +215,23 @@ func (a *Args) unexpectedArgumentMessage() string {
 }
 
 const (
+	// ErrOk - Not an error
 	ErrOk = iota
+	// ErrUnexpectedArgument - The argument provided was not provided in the schema
 	ErrUnexpectedArgument
+	// ErrMissingString - The string argument misses its parameter
 	ErrMissingString
+	// ErrMissingInteger - The integer argument misses its parameter
 	ErrMissingInteger
+	// ErrInvalidInteger - The integer parameter is invalid
 	ErrInvalidInteger
+	// ErrMissingFloat - The float argument misses its parameter
 	ErrMissingFloat
+	// ErrInvalidFloat - The float parameter is invalid
 	ErrInvalidFloat
+	// ErrInvalidArgumentName - The schema name was invalid
 	ErrInvalidArgumentName
+	// ErrInvalidFormat - The schema format was invalid
 	ErrInvalidFormat
 )
 
@@ -310,20 +319,19 @@ type integerargumentMarshaler struct {
 }
 
 func (m *integerargumentMarshaler) set(i *iterator) error {
+	var err error
 	if !i.hasNext() {
 		return &ArgsError{errorCode: ErrMissingInteger}
 	}
-
 	param := i.next()
-	intVal, err := strconv.Atoi(param)
+	m.intVal, err = strconv.Atoi(param)
 	if err != nil {
-		return &ArgsError{
+		err = &ArgsError{
 			errorCode:      ErrInvalidInteger,
 			errorParameter: param,
 		}
 	}
-	m.intVal = intVal
-	return nil
+	return err
 }
 
 func (m *integerargumentMarshaler) get() interface{} {
@@ -335,20 +343,19 @@ type floatargumentMarshaler struct {
 }
 
 func (m *floatargumentMarshaler) set(i *iterator) error {
+	var err error
 	if !i.hasNext() {
 		return &ArgsError{errorCode: ErrMissingFloat}
 	}
-
 	param := i.next()
-	floatVal, err := strconv.ParseFloat(param, 64)
+	m.floatVal, err = strconv.ParseFloat(param, 64)
 	if err != nil {
-		return &ArgsError{
+		err = &ArgsError{
 			errorCode:      ErrInvalidFloat,
 			errorParameter: param,
 		}
 	}
-	m.floatVal = floatVal
-	return nil
+	return err
 }
 
 func (m *floatargumentMarshaler) get() interface{} {
@@ -361,10 +368,7 @@ type iterator struct {
 }
 
 func newIterator(elements []string) *iterator {
-	return &iterator{
-		pos:      -1,
-		elements: elements,
-	}
+	return &iterator{pos: -1, elements: elements}
 }
 
 func (i *iterator) next() string {
